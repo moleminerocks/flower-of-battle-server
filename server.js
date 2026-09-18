@@ -2,6 +2,7 @@
 // Uses Node built-ins only. The supplied game speaks HTTPS long-poll JSON,
 // not Socket.IO. Keep one running server instance: match data lives in memory.
 const http = require('node:http');
+const billing = require('./play-billing').createBilling();
 const { randomUUID, randomInt } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -392,6 +393,21 @@ function createGameServer(options={}) {
       const url=new URL(req.url,'http://localhost');
       if(url.pathname==='/healthz'){sendJSON(res,200,{ok:true,players:sessions.size,rooms:rooms.size});return;}
       if(url.pathname==='/api/multiplayer'){await api(req,res,url);return;}
+      if(url.pathname==='/api/billing/status'||url.pathname==='/api/billing/verify'){
+        res.setHeader('Cache-Control','no-store');
+        if(!cors(req,res)){sendJSON(res,403,{error:'Origin is not allowed.'});return;}
+        if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;}
+        if(url.pathname==='/api/billing/status'&&req.method==='GET'){
+          sendJSON(res,200,{configured:billing.configured});return;
+        }
+        if(url.pathname==='/api/billing/verify'&&req.method==='POST'){
+          let raw='',bytes=0;
+          for await(const chunk of req){bytes+=chunk.length;if(bytes>8192)throw Object.assign(new Error('Request too large'),{status:413});raw+=chunk.toString();}
+          let input;try{input=JSON.parse(raw);}catch{throw Object.assign(new Error('Invalid JSON'),{status:400});}
+          sendJSON(res,200,await billing.verify(input));return;
+        }
+        sendJSON(res,405,{error:'Method not allowed.'});return;
+      }
       if(!['GET','HEAD'].includes(req.method)){sendJSON(res,405,{error:'Method not allowed.'});return;}
       const decoded=decodeURIComponent(url.pathname);
       const file=path.resolve(publicDir,'.'+(decoded==='/'?'/index.html':decoded));
